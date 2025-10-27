@@ -66,6 +66,23 @@
             margin-bottom: 12px;
             text-align: left;
         }
+
+        /* Style for the Go to Dashboard button */
+        .dashboard-btn {
+            display: block;
+            text-align: center;
+            background-color: #d32f2f;
+            color: white;
+            text-decoration: none;
+            padding: 12px;
+            border-radius: 8px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .dashboard-btn:hover {
+            background-color: #b71c1c;
+        }
     </style>
 </head>
 <body>
@@ -108,10 +125,12 @@
             <input type="submit" value="Register">
             <div class="note">📍 Your location will be detected automatically</div>
         </form>
+
+        <!-- Go to Dashboard Button -->
+        <a href="dashboard.php" class="dashboard-btn">🩸 Go to Dashboard</a>
     </div>
 
     <script>
-        // Detect location but DO NOT block form submit
         function detectLocation() {
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
@@ -121,10 +140,11 @@
                         console.log("✅ Location detected:", position.coords.latitude, position.coords.longitude);
                     },
                     function(error) {
-                        console.log("⚠️ Location access denied:", error.message);
-                        // alert removed → no popup
+                        alert("⚠️ Please allow location access to complete registration.\n\nError: " + error.message);
                     }
                 );
+            } else {
+                alert("Geolocation is not supported by this browser.");
             }
         }
 
@@ -137,11 +157,7 @@
                 detectLocation();
             }
         }, 5000);
-
-        // Form submit → no location check
-        document.getElementById("donorForm").addEventListener("submit", function(e) {
-            // form always submits
-        });
     </script>
 </body>
 </html>
+
