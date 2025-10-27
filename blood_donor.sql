@@ -24,3 +24,4 @@ CREATE TABLE admin (
 
 -- Default Admin Login
 INSERT INTO admin (username, password) VALUES ('admin', 'admin123');
+
