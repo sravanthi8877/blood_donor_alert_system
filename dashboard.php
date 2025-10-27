@@ -8,12 +8,6 @@ error_reporting(E_ALL);
 header("Cache-Control: no-cache, must-revalidate");
 header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
 
-session_start();
-if(!isset($_SESSION['admin'])){
-    header("Location: admin_login.php");
-    exit();
-}
-
 // Database connection
 $servername = "sql202.infinityfree.com";
 $username   = "if0_39592163";
@@ -23,13 +17,6 @@ $dbname     = "if0_39592163_blood";
 $conn = new mysqli($servername, $username, $password, $dbname);
 if ($conn->connect_error) {
     die("❌ Connection failed: " . $conn->connect_error);
-}
-
-// Logout
-if(isset($_POST['logout'])){
-    session_destroy();
-    header("Location: admin_login.php");
-    exit();
 }
 
 // Filters
@@ -54,7 +41,6 @@ if(!empty($where)){
 // Base SQL
 $sql = "SELECT id, name, blood_group, phone, city, latitude, longitude, last_donation_date";
 
-// Distance calculation if GPS available
 if($current_lat && $current_lon){
     $sql .= ", (6371 * acos(
         cos(radians($current_lat)) *
@@ -67,19 +53,54 @@ if($current_lat && $current_lon){
 
 $sql .= " FROM donors";
 
-// Apply WHERE conditions
 if(!empty($where)){
     $sql .= " WHERE ".implode(" AND ", $where);
 }
 
-// Order results
 if($current_lat && $current_lon){
-    $sql .= " ORDER BY distance ASC"; // nearest first
+    $sql .= " ORDER BY distance ASC";
 }else{
-    $sql .= " ORDER BY id DESC"; // latest donors first
+    $sql .= " ORDER BY id DESC";
 }
 
 $result = $conn->query($sql);
+
+// If no exact donors found and blood group filter applied → fetch compatible donors
+$compatible_result = null;
+if ($result && $result->num_rows == 0 && $filter_blood != '') {
+    $compatibility = [
+        "A+" => ["A+", "A-", "O+", "O-"],
+        "A-" => ["A-", "O-"],
+        "B+" => ["B+", "B-", "O+", "O-"],
+        "B-" => ["B-", "O-"],
+        "AB+" => ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
+        "AB-" => ["AB-", "A-", "B-", "O-"],
+        "O+" => ["O+", "O-"],
+        "O-" => ["O-"]
+    ];
+
+    if (isset($compatibility[$filter_blood])) {
+        $groups = "'" . implode("','", $compatibility[$filter_blood]) . "'";
+        $sql2 = "SELECT id, name, blood_group, phone, city, last_donation_date";
+        if($current_lat && $current_lon){
+            $sql2 .= ", (6371 * acos(
+                cos(radians($current_lat)) *
+                cos(radians(latitude)) *
+                cos(radians(longitude) - radians($current_lon)) +
+                sin(radians($current_lat)) *
+                sin(radians(latitude))
+            )) AS distance";
+        }
+        $sql2 .= " FROM donors WHERE blood_group IN ($groups)";
+        $sql2 .= " AND (last_donation_date IS NULL OR last_donation_date <= '$three_months_ago')";
+        if($current_lat && $current_lon){
+            $sql2 .= " ORDER BY distance ASC";
+        } else {
+            $sql2 .= " ORDER BY id DESC";
+        }
+        $compatible_result = $conn->query($sql2);
+    }
+}
 ?>
 <!DOCTYPE html>
 <html>
@@ -98,9 +119,6 @@ $result = $conn->query($sql);
         .filter-form input[type="text"], select { padding: 6px; margin-right: 5px; }
         .filter-form input[type="submit"], .csv-button input[type="submit"] { padding: 6px 12px; background: crimson; color: white; border: none; border-radius: 6px; cursor: pointer; }
         .filter-form input[type="submit"]:hover, .csv-button input[type="submit"]:hover { background: darkred; }
-        .logout-form { text-align:center; margin-bottom: 10px; }
-        .logout-form input[type="submit"] { padding:6px 12px; background:red; color:white; border:none; border-radius:6px; cursor:pointer; }
-        .logout-form input[type="submit"]:hover { background: darkred; }
         .csv-button { text-align:center; margin:10px; }
         @media only screen and (max-width: 600px) {
             table, th, td { font-size:12px; }
@@ -110,12 +128,6 @@ $result = $conn->query($sql);
 </head>
 <body>
     <h2>🩸 Blood Donor Dashboard</h2>
-
-    <div class="logout-form">
-        <form method="POST">
-            <input type="submit" name="logout" value="Logout">
-        </form>
-    </div>
 
     <div class="filter-form">
         <form method="GET" id="filterForm">
@@ -137,8 +149,14 @@ $result = $conn->query($sql);
         </form>
     </div>
 
+    <!-- ✅ CSV Download form with filters -->
     <div class="csv-button">
         <form action="download.php" method="GET">
+            <input type="hidden" name="name" value="<?php echo htmlspecialchars($filter_name); ?>">
+            <input type="hidden" name="blood_group" value="<?php echo htmlspecialchars($filter_blood); ?>">
+            <input type="hidden" name="city" value="<?php echo htmlspecialchars($filter_city); ?>">
+            <input type="hidden" name="latitude" value="<?php echo htmlspecialchars($current_lat); ?>">
+            <input type="hidden" name="longitude" value="<?php echo htmlspecialchars($current_lon); ?>">
             <input type="submit" value="Download Donor CSV">
         </form>
     </div>
@@ -167,13 +185,26 @@ $result = $conn->query($sql);
                 echo "</tr>";
             }
         } else {
-            echo "<tr><td colspan='".($current_lat!==null?7:6)."'>⚠️ No donors found</td></tr>";
+            echo "<tr><td colspan='".($current_lat!==null?7:6)."'>⚠️ No donors found with $filter_blood</td></tr>";
+            if ($compatible_result && $compatible_result->num_rows > 0) {
+                echo "<tr><td colspan='".($current_lat!==null?7:6)."' style='color:darkred;font-weight:bold;'>Compatible Donors (can donate to $filter_blood):</td></tr>";
+                while($row = $compatible_result->fetch_assoc()) {
+                    echo "<tr>
+                            <td>".$row['name']."</td>
+                            <td>".$row['blood_group']."</td>
+                            <td>".$row['phone']."</td>
+                            <td>".$row['city']."</td>
+                            <td>".($row['last_donation_date'] ? $row['last_donation_date'] : 'N/A')."</td>
+                            <td><a href='tel:+91".$row['phone']."'><button>Call Donor</button></a></td>";
+                    if($current_lat !== null && isset($row['distance'])) echo "<td>".round($row['distance'],2)."</td>";
+                    echo "</tr>";
+                }
+            }
         }
         ?>
     </table>
 
     <script>
-        // GPS fetch + auto submit once
         if(navigator.geolocation){
             navigator.geolocation.getCurrentPosition(function(position){
                 document.getElementById("latitude").value = position.coords.latitude;
@@ -188,3 +219,4 @@ $result = $conn->query($sql);
     </script>
 </body>
 </html>
+
